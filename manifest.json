@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "SelectEnglish · 划词阅读助手",
+  "version": "0.3.0",
+  "description": "在阅读中理解英文、积累表达：选中英文后弹出牛皮纸小窗，按「生词 → 整句解释 → 固定表达」的顺序展示，支持自定义 OpenAI 兼容接口。",
+  "minimum_chrome_version": "110",
+  "permissions": [
+    "storage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "src/lib.js",
+        "src/styles.js",
+        "src/content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "SelectEnglish 设置"
+  },
+  "options_page": "src/options.html",
+  "commands": {
+    "translate-selection": {
+      "suggested_key": {
+        "default": "Alt+Shift+E"
+      },
+      "description": "查询当前选中的英文"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

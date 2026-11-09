@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>SelectEnglish · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="mark">译</span>
+      <div>
+        <h1>SelectEnglish</h1>
+        <p class="sub">在阅读中理解英文，积累表达。</p>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab" data-tab="settings" type="button">设置</button>
+      <button class="tab" data-tab="favorites" type="button">收藏</button>
+      <button class="tab" data-tab="history" type="button">历史</button>
+      <button class="tab" data-tab="about" type="button">说明</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="pane-settings" class="pane">
+      <div class="card">
+        <div class="row">
+          <label class="switch">
+            <input type="checkbox" id="enabled">
+            <span>启用划词查询</span>
+          </label>
+          <span class="hint">关闭后页面上不再出现小圆钮和小窗。</span>
+        </div>
+        <div class="row">
+          <label for="trigger">触发方式</label>
+          <select id="trigger">
+            <option value="button">选中后出现小圆钮，点击查询（接近原版的「按一下才查」）</option>
+            <option value="auto">选中即自动查询</option>
+          </select>
+        </div>
+        <div class="row">
+          <label class="switch">
+            <input type="checkbox" id="recordHistory">
+            <span>记录查询历史</span>
+          </label>
+          <span class="hint">历史只存在本机（最多 300 条），可在「历史」标签里查看、导出或清空。</span>
+        </div>
+        <div class="row">
+          <label class="switch">
+            <input type="checkbox" id="demoMode">
+            <span>演示模式（不联网，返回内置示例）</span>
+          </label>
+          <span class="hint">没填 API Key 时也能先看效果：选中英文会返回一份固定示例，不消耗任何接口。
+            填好 Key 后关掉它即可真实分析。</span>
+        </div>
+        <div class="row">
+          <label for="apiBase">接口地址</label>
+          <input type="text" id="apiBase" placeholder="https://api.deepseek.com/v1" spellcheck="false">
+          <span class="hint">OpenAI 兼容的 <code>chat/completions</code>。填到 <code>/v1</code> 或直接填完整地址都可以。</span>
+        </div>
+        <div class="row">
+          <label for="model">模型</label>
+          <input type="text" id="model" placeholder="deepseek-chat" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="apiKey">API Key</label>
+          <input type="password" id="apiKey" placeholder="sk-..." spellcheck="false" autocomplete="off">
+          <span class="hint">只保存在本机浏览器存储中（<code>chrome.storage.local</code>），不会写入代码、不会上传；导出/同步请自行留意。</span>
+        </div>
+        <div class="row inline">
+          <label for="temperature">温度</label>
+          <input type="number" id="temperature" min="0" max="2" step="0.1">
+          <label class="switch small">
+            <input type="checkbox" id="jsonMode">
+            <span>请求 JSON 模式</span>
+          </label>
+        </div>
+        <div class="row">
+          <span class="hint">温度 = 模型回答的随机程度：<b>0 最稳定</b>、每次结果几乎一样；越大越发散、措辞越花样。
+            查词这种任务要的是稳定，建议 0–0.5，默认 0.3。留空也会回到默认。</span>
+        </div>
+        <div class="actions">
+          <button id="save" class="primary" type="button" disabled>保存</button>
+          <button id="test" type="button" disabled>测试连接</button>
+          <button id="reset" type="button" disabled>恢复默认</button>
+          <span id="status" class="status" role="status"></span>
+        </div>
+      </div>
+    </section>
+
+    <section id="pane-favorites" class="pane" hidden>
+      <div class="card">
+        <div class="actions">
+          <span id="favCount" class="hint"></span>
+          <span class="grow"></span>
+          <button id="export" type="button">导出 JSON</button>
+          <button id="exportAnki" type="button">导出 Anki CSV</button>
+          <button id="exportMd" type="button">导出 Markdown</button>
+          <button id="clear" type="button" class="danger">清空全部</button>
+        </div>
+      </div>
+      <div id="favList" class="favlist"></div>
+    </section>
+
+    <section id="pane-history" class="pane" hidden>
+      <div class="card">
+        <div class="actions">
+          <span id="hisCount" class="hint"></span>
+          <span class="grow"></span>
+          <button id="exportHisAnki" type="button">导出 Anki CSV</button>
+          <button id="exportHisMd" type="button">导出 Markdown</button>
+          <button id="clearHis" type="button" class="danger">清空历史</button>
+        </div>
+      </div>
+      <div id="hisList" class="favlist"></div>
+    </section>
+
+    <section id="pane-about" class="pane" hidden>
+      <div class="card prose">
+        <h2>这是什么</h2>
+        <p>SelectEnglish 原本是 macOS 原生 App（Swift/AppKit + Force Touch 触控板）。本扩展是它的浏览器版复刻：
+          选中英文后弹出牛皮纸小窗，按「生词 → 整句解释 → 固定表达」的顺序给出结果，逻辑与提示词对齐原项目，
+          面向大学英语六级阅读者（优先六级及以上词汇、专业词、熟词僻义，略过基础高频词）。</p>
+        <h2>说明</h2>
+        <p>本扩展<strong>不内置任何 API Key</strong>，AI 能力由你自己配置：填一个 OpenAI 兼容接口（DeepSeek 等）的地址、
+          模型名和你的 Key。没配之前可以勾选<strong>「演示模式」</strong>先看效果，不联网、不花钱。</p>
+        <h2>怎么用</h2>
+        <ul>
+          <li>用鼠标选中一段英文 → 出现「译」小圆钮 → 点它；或在选中文本上点右键 →「查询选中的英文」。</li>
+          <li>快捷键：<kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd> 直接查询当前选区。</li>
+          <li>小窗里：<b>🔊</b> 朗读、<b>☆</b> 收藏、<b>⧉</b> 复制、<b>✕</b> 或 <kbd>Esc</kbd> 关闭；每个生词后面的小喇叭单独读这个词。</li>
+          <li>按住小窗顶部或底部可以拖动，本次会话内会记住摆放位置；跟随系统深色模式自动切换配色。</li>
+          <li>「历史」标签里能回看最近的查询，收藏和历史都可以导出 Anki CSV（导入时勾选「允许 HTML」）或 Markdown。</li>
+        </ul>
+        <h2>隐私</h2>
+        <ul>
+          <li>只有你主动查询时，才会把选中的英文、所在句子、网页标题发送给你自己配置的 AI 接口。</li>
+          <li>API Key 存放在扩展自身的本地存储里（设置页与后台可读）；网页脚本和页面里的代码读不到。</li>
+          <li>收藏和查询历史保存在本机，不上传，可在设置里关闭历史记录或随时清空。接口地址、模型、Key 全部由你自填，不经过任何第三方服务器。</li>
+        </ul>
+        <h2>原项目</h2>
+        <p>设计来源：<a href="https://github.com/James-Yao-xj/SelectEnglish" target="_blank" rel="noreferrer">James-Yao-xj/SelectEnglish</a>（MIT）。本扩展为独立复刻实现。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="lib.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

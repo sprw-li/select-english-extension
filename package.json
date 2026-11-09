@@ -1,0 +1,14 @@
+{
+  "name": "select-english-extension",
+  "version": "0.3.0",
+  "private": true,
+  "description": "SelectEnglish 划词阅读助手（浏览器版）：选中英文 → 牛皮纸小窗 → 生词 / 整句解释 / 固定表达，支持自定义 OpenAI 兼容接口。",
+  "scripts": {
+    "test": "node tests/lib.test.mjs && node tests/check-manifest.mjs && node tests/background.test.mjs && node tests/content-dom.test.mjs",
+    "test:fast": "node tests/lib.test.mjs && node tests/check-manifest.mjs && node tests/background.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^31.0.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  node-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 纯逻辑 + MV3 结构 + 后台全链路（无第三方依赖）
+      - name: Fast tests (no dependencies)
+        run: |
+          node tests/lib.test.mjs
+          node tests/check-manifest.mjs
+          node tests/background.test.mjs
+
+      # DOM 冒烟测试需要 jsdom；装好后把 SE_JSDOM_DIR 指到仓库根，
+      # tests/content-dom.test.mjs 会从这里的 node_modules 解析 jsdom
+      - name: Install jsdom
+        run: npm install --no-audit --no-fund
+
+      - name: DOM smoke tests
+        run: node tests/content-dom.test.mjs
+        env:
+          SE_JSDOM_DIR: ${{ github.workspace }}
+
+      - name: Pack extension zip
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE -DestinationPath "dist/select-english-extension.zip" -Force
+          Get-Item dist/select-english-extension.zip | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: select-english-extension-zip
+          path: dist/select-english-extension.zip
+          retention-days: 14
