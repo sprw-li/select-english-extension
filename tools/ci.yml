@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   node-tests:
     runs-on: windows-latest
@@ -23,19 +26,22 @@ jobs:
           node tests/background.test.mjs
 
       # DOM 冒烟测试需要 jsdom；装好后把 SE_JSDOM_DIR 指到仓库根，
-      # tests/content-dom.test.mjs 会从这里的 node_modules 解析 jsdom
+      # 三个带 DOM 的测试都会从这里的 node_modules 解析 jsdom
       - name: Install jsdom
         run: npm install --no-audit --no-fund
 
       - name: DOM smoke tests
-        run: node tests/content-dom.test.mjs
+        run: |
+          node tests/content-dom.test.mjs
+          node tests/popup-dom.test.mjs
+          node tests/streaming.test.mjs
         env:
           SE_JSDOM_DIR: ${{ github.workspace }}
 
       - name: Pack extension zip
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE -DestinationPath "dist/select-english-extension.zip" -Force
+          Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE, CHANGELOG.md -DestinationPath "dist/select-english-extension.zip" -Force
           Get-Item dist/select-english-extension.zip | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4

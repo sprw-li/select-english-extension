@@ -71,7 +71,7 @@ select-english-extension/
 │  ├─ popup.html/css/js   工具栏弹窗：状态、开关、本站停用
 ├─ icons/                 扩展图标（由 tools/make_icons.py 生成）
 ├─ tests/                 单元测试与结构自检
-└─ tools/                 make_icons.py、ci.yml（工作流模板）
+└─ tools/                 make_icons.py、ci.yml（Actions 工作流模板）
 ```
 
 变更记录见 [CHANGELOG.md](CHANGELOG.md)。
@@ -87,9 +87,15 @@ Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE, CHANGELOG.
 
 `dist/` 已在 `.gitignore` 里。**API Key 永远不会进这个包**：它只存在浏览器本地存储中。
 
-CI 工作流模板在 `tools/ci.yml`（跑测试 + 打 zip 构件）。启用方式：仓库 Settings → Actions 允许工作流后，
-把该文件复制到 `.github/workflows/ci.yml` 再提交即可（用命令行提交需要 token 具备 `workflow` 权限：
-`gh auth refresh -h github.com -s workflow`）。
+CI 工作流模板在 `tools/ci.yml`（GitHub Actions，`windows-latest`）：push 到 `main` 或提 PR 时，
+跑上面全部 6 个测试文件，并把扩展打成 `dist/select-english-extension.zip` 上传为构件（Artifacts，保留 14 天）。
+
+启用方式（GitHub 要求 token 具备 `workflow` 权限才能提交 `.github/workflows/*`，所以需要你本人授权一次）：
+
+1. 在能访问 github.com 的网络下执行 `gh auth refresh -h github.com -s workflow`，浏览器里点一次 Authorize；
+2. 然后把 `tools/ci.yml` 复制到 `.github/workflows/ci.yml` 提交即可。
+
+不想用命令行也行：在仓库网页里点 **Actions → set up a workflow yourself**，把 `tools/ci.yml` 的内容粘进去提交。
 
 ## 测试
 
