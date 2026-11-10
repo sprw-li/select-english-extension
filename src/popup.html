@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>SelectEnglish</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <span class="mark">译</span>
+    <div class="title">
+      <strong>SelectEnglish</strong>
+      <span id="version" class="ver"></span>
+    </div>
+  </header>
+
+  <div id="status" class="status">
+    <span id="dot" class="dot"></span>
+    <span id="statusText">读取中…</span>
+  </div>
+
+  <div class="switches">
+    <label class="row">
+      <input type="checkbox" id="enabled">
+      <span>启用划词查询</span>
+    </label>
+    <label class="row">
+      <input type="checkbox" id="demoMode">
+      <span>演示模式（不联网）</span>
+    </label>
+    <label class="row">
+      <input type="checkbox" id="recordHistory">
+      <span>记录查询历史</span>
+    </label>
+  </div>
+
+  <div class="site">
+    <label class="row">
+      <input type="checkbox" id="siteDisabled">
+      <span>在本站停用</span>
+    </label>
+    <span id="host" class="host"></span>
+  </div>
+
+  <footer class="foot">
+    <button id="openOptions" class="primary" type="button">设置</button>
+    <button id="openFavorites" type="button">收藏 <span id="favCount">0</span></button>
+    <button id="openHistory" type="button">历史 <span id="hisCount">0</span></button>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

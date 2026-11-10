@@ -36,6 +36,7 @@
 
 - 用鼠标选中一段英文 → 出现小圆钮「译」→ 点它；也可以 **在选中文本上点右键 →「查询选中的英文」**，或按 <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>。
 - 只认**英文为主**的选区；中文、日文、韩文不会被弹窗，也不会把内容发出去。
+- **点工具栏的图标**会打开快速面板：看当前状态（已配 Key / 演示模式 / 未配置）、开关划词、开关演示模式、开关历史，以及**「在本站停用」**（按域名，只影响当前网站），还能一键跳到收藏/历史。
 - 小窗顺序固定：**生词**（词性 + 中文释义，优先六级及以上词汇、专业词、熟词僻义；单独选一个词时一定解释这个词）→ **整句解释**（译文 + 语境解释）→ **固定表达**（释义 + 例句）。
 - 小窗右上角：**🔊** 朗读选中内容（每个生词后还有单独的小喇叭）、**☆** 收藏、**⧉** 复制、**✕** 关闭；点空白处或按 <kbd>Esc</kbd> 也可关闭。朗读用浏览器自带语音，优先美音，不走 API、不计费。
 - **按住小窗顶部或底部可以拖动**，本次会话内会记住摆放位置；小窗和设置页都会跟随系统深色模式自动切换成深色纸面。
@@ -65,6 +66,7 @@ select-english-extension/
 │  ├─ content.js          划词交互、小圆钮、小窗渲染（不接触 API Key）
 │  ├─ background.js       Service Worker：唯一持有 Key、调用接口、缓存
 │  ├─ options.html/css/js 设置页 + 收藏/历史管理
+│  ├─ popup.html/css/js   工具栏弹窗：状态、开关、本站停用
 ├─ icons/                 扩展图标（由 tools/make_icons.py 生成）
 ├─ tests/                 单元测试与结构自检
 └─ tools/                 make_icons.py、ci.yml（工作流模板）
@@ -78,7 +80,7 @@ select-english-extension/
 
 ```powershell
 New-Item -ItemType Directory -Force -Path dist | Out-Null
-Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE -DestinationPath "dist/select-english-extension-v0.3.1.zip" -Force
+Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE, CHANGELOG.md -DestinationPath "dist/select-english-extension-v0.4.0.zip" -Force
 ```
 
 `dist/` 已在 `.gitignore` 里。**API Key 永远不会进这个包**：它只存在浏览器本地存储中。
@@ -91,12 +93,13 @@ CI 工作流模板在 `tools/ci.yml`（跑测试 + 打 zip 构件）。启用方
 
 ```powershell
 node tests\lib.test.mjs         # 提示词 / JSON 解析 / 归一化 / 英文判定 / 朗读选声 / Anki … 78 项
-node tests\check-manifest.mjs   # MV3 结构、文件引用、安全不变量 ……………………………… 33 项
-node tests\background.test.mjs  # 后台全链路：请求/缓存/历史/菜单/演示/存储级别（假 chrome）… 99 项
-node tests\content-dom.test.mjs # 划词交互 DOM 冒烟：圆钮/弹窗/收藏/朗读/拖动/启停/中英文 … 62 项
+node tests\check-manifest.mjs   # MV3 结构、弹窗资源、安全不变量 ……………………………… 41 项
+node tests\background.test.mjs  # 后台：请求/重试/缓存/历史/菜单/演示/存储级别（假 chrome）… 108 项
+node tests\content-dom.test.mjs # 划词 DOM 冒烟：圆钮/弹窗/收藏/朗读/拖动/启停/中英文/站点 … 66 项
+node tests\popup-dom.test.mjs   # 工具栏弹窗 DOM 冒烟：状态/开关/本站停用/跳转 ……………… 12 项
 ```
 
-合计 272 项断言，全部通过。
+合计 305 项断言，全部通过。
 
 - `background.test.mjs` 与 `content-dom.test.mjs` 会真正执行 `src/background.js` 与 `src/content.js`，不是只做字符串检查。
 - `content-dom.test.mjs` 需要 jsdom（`npm i jsdom`，并把 `SE_JSDOM_DIR` 指向装它的目录；没装时该测试自动 SKIP 而不是失败）。

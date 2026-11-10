@@ -66,9 +66,18 @@ for (const file of ['src/content.js', 'src/background.js', 'src/options.js']) {
   check(file + ' 无动态代码执行', !/\beval\s*\(|new\s+Function\s*\(|document\.write\s*\(|insertAdjacentHTML|\.srcdoc\s*=/.test(code));
 }
 
-for (const t of ['tests/lib.test.mjs', 'tests/background.test.mjs', 'tests/content-dom.test.mjs']) {
+for (const t of ['tests/lib.test.mjs', 'tests/background.test.mjs', 'tests/content-dom.test.mjs', 'tests/popup-dom.test.mjs']) {
   check('存在真实执行型测试: ' + t, existsSync(path.join(root, t)));
 }
+
+/* 工具栏弹窗 */
+for (const f of ['src/popup.html', 'src/popup.js', 'src/popup.css']) {
+  check('弹窗资源存在: ' + f, existsSync(path.join(root, f)));
+}
+const popupHtml = readFileSync(path.join(root, 'src/popup.html'), 'utf8');
+check('弹窗页引用了 popup.js', /<script src="popup\.js"><\/script>/.test(popupHtml));
+check('弹窗页引用了 popup.css', /<link rel="stylesheet" href="popup\.css">/.test(popupHtml));
+check('manifest 指定了 default_popup', manifest.action && /popup\.html$/.test(manifest.action.default_popup || ''));
 
 const bgSrc = readFileSync(path.join(root, 'src/background.js'), 'utf8');
 check('background 不把 apiKey 回传 content script', !/settings:\s*cfg\.settings,\s*apiKey/.test(bgSrc));

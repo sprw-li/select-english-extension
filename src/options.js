@@ -311,7 +311,10 @@ Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
 });
 
 loadSettings()
-  .then(function () { switchTab('settings'); })
+  .then(function () {
+    var tab = (location.hash || '').replace('#', '');
+    switchTab(['settings', 'favorites', 'history', 'about'].indexOf(tab) >= 0 ? tab : 'settings');
+  })
   .catch(function (e) { setStatus('读取设置失败：' + (e && e.message || e), 'err'); })
   .finally(function () {
     booted = true;

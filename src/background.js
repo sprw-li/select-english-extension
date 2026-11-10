@@ -13,11 +13,15 @@ var DEFAULT_SETTINGS = {
   trigger: 'button',              // 'button' | 'auto'
   demoMode: false,                // true = 不联网，返回内置示例
   recordHistory: false,           // 默认不记录查询历史（只有主动「收藏」才留内容）
+  disabledSites: [],              // 在这些域名上完全不生效
   apiBase: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
   temperature: 0.3,
   jsonMode: true
 };
+
+var RETRYABLE_STATUS = { 429: 1, 502: 1, 503: 1, 504: 1 };
+var RETRY_DELAY = 700;
 
 var CACHE_TTL = 10 * 60 * 1000;
 var CACHE_MAX = 60;
@@ -41,17 +45,24 @@ chrome.storage.onChanged.addListener(function (changes, area) {
   if (changes.settings) broadcastSettings(changes.settings.newValue);
 });
 
+/** content script 能拿到的那部分设置（永远不含 Key / 接口 / 模型） */
+function uiSettings(settings) {
+  var s = settings || {};
+  var sites = Array.isArray(s.disabledSites)
+    ? s.disabledSites.filter(function (h) { return typeof h === 'string' && h; }).slice(0, 200)
+    : [];
+  return {
+    enabled: s.enabled !== false,
+    trigger: s.trigger === 'auto' ? 'auto' : 'button',
+    disabledSites: sites
+  };
+}
+
 /** 把（不含密钥的）设置变化推给所有已打开的页面，content script 不再监听 storage */
 function broadcastSettings(settings) {
   try {
     chrome.tabs.query({}, function (tabs) {
-      var msg = {
-        type: 'se-settings-changed',
-        settings: {
-          enabled: (settings || {}).enabled !== false,
-          trigger: (settings || {}).trigger === 'auto' ? 'auto' : 'button'
-        }
-      };
+      var msg = { type: 'se-settings-changed', settings: uiSettings(settings) };
       (tabs || []).forEach(function (tab) {
         if (!tab || !tab.id) return;
         chrome.tabs.sendMessage(tab.id, msg, function () {
@@ -110,6 +121,27 @@ function doFetch(url, apiKey, body) {
   });
 }
 
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+/** 网络抖动、超时、429/5xx（网关类）自动重试一次；4xx 业务错误不重试 */
+async function doFetchWithRetry(url, apiKey, body) {
+  var res;
+  try {
+    res = await doFetch(url, apiKey, body);
+  } catch (err) {
+    try { await sleep(RETRY_DELAY); } catch (e) { /* 忽略 */ }
+    return await doFetch(url, apiKey, body);   // 第二次失败就把原样错误抛出去
+  }
+  if (RETRYABLE_STATUS[res.status]) {
+    try { await res.text(); } catch (e) { /* 丢弃响应体 */ }
+    await sleep(RETRY_DELAY);
+    return await doFetch(url, apiKey, body);
+  }
+  return res;
+}
+
 function contentOf(data) {
   var choice = data && data.choices && data.choices[0];
   var content = choice && choice.message && choice.message.content;
@@ -139,13 +171,13 @@ async function callChat(cfg, messages) {
   if (isFinite(temperature)) body.temperature = temperature;
   if (cfg.settings.jsonMode) body.response_format = { type: 'json_object' };
 
-  var res = await doFetch(url, cfg.apiKey, body);
+  var res = await doFetchWithRetry(url, cfg.apiKey, body);
   if (!res.ok) {
     var detail = await readDetail(res);
     if (body.response_format && looksLikeFormatRejection(res.status, detail)) {
       // 部分 OpenAI 兼容服务不支持 response_format，自动降级重试一次
       delete body.response_format;
-      res = await doFetch(url, cfg.apiKey, body);
+      res = await doFetchWithRetry(url, cfg.apiKey, body);
       if (!res.ok) throw httpError(res.status, await readDetail(res));
     } else {
       throw httpError(res.status, detail);
@@ -352,7 +384,7 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     readConfig().then(function (cfg) {
       sendResponse({
         ok: true,
-        settings: { enabled: cfg.settings.enabled !== false, trigger: cfg.settings.trigger === 'auto' ? 'auto' : 'button' },
+        settings: uiSettings(cfg.settings),
         hasKey: !!cfg.apiKey
       });
     }, function (err) {
@@ -365,7 +397,7 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     readConfig().then(function (cfg) {
       sendResponse({
         ok: true,
-        settings: { enabled: cfg.settings.enabled !== false, trigger: cfg.settings.trigger === 'auto' ? 'auto' : 'button' }
+        settings: uiSettings(cfg.settings)
       });
     }, function (err) {
       sendResponse({ ok: false, error: String((err && err.message) || err) });
@@ -385,10 +417,6 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     sendResponse({ ok: true });
     return true;
   }
-});
-
-chrome.action.onClicked.addListener(function () {
-  chrome.runtime.openOptionsPage();
 });
 
 chrome.runtime.onInstalled.addListener(function (details) {

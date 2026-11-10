@@ -294,6 +294,35 @@ eq('启用后命令被接受', reply2 && reply2.ok, true);
 await wait(20);
 check('启用后重新发起查询', messages.length > beforeEnabled);
 
+/* ---- 9. 在本站停用后：不弹圆钮、不发请求 ---- */
+win.__seOnMessage({ type: 'se-settings-changed', settings: { enabled: true, trigger: 'button', disabledSites: ['example.com'] } }, {}, () => {});
+await wait(10);
+const rSite = win.document.createRange();
+rSite.selectNodeContents(win.document.getElementById('t'));
+const sSite = win.getSelection();
+sSite.removeAllRanges();
+sSite.addRange(rSite);
+const beforeSite = messages.filter((m) => m.type === 'se-analyze').length;
+win.document.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true, button: 0 }));
+await wait(20);
+eq('本站停用后不发请求', messages.filter((m) => m.type === 'se-analyze').length, beforeSite);
+const bubbleSite = win.__seRoot.querySelector('.se-bubble');
+check('本站停用后不出圆钮', !bubbleSite || bubbleSite.style.display === 'none');
+
+const siteTrigger = await new Promise((resolve) => {
+  const keep = win.__seOnMessage({ type: 'se-trigger' }, {}, resolve);
+  if (keep !== true) resolve(undefined);
+});
+check('本站停用时快捷键被拒', siteTrigger && siteTrigger.ok === false && /本站/.test(siteTrigger.error || ''), JSON.stringify(siteTrigger));
+
+/* ---- 10. 恢复本站 ---- */
+win.__seOnMessage({ type: 'se-settings-changed', settings: { enabled: true, trigger: 'button', disabledSites: [] } }, {}, () => {});
+await wait(10);
+win.document.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true, button: 0 }));
+await wait(20);
+const bubbleRestored = win.__seRoot.querySelector('.se-bubble');
+check('恢复后圆钮重新出现', !!bubbleRestored && bubbleRestored.style.display === 'flex');
+
 console.log(`content.js DOM: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   failures.forEach((f) => console.error('  ✗ ' + f));

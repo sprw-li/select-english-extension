@@ -413,7 +413,7 @@ const DEFAULT_STORE = () => ({
   const { sandbox } = boot({ store: { get: DEFAULT_STORE }, fetchImpl: async () => okResponse({ words: [] }) });
   const res = await ask(sandbox, { type: 'se-ui-settings' });
   eq('返回 ok', res.ok, true);
-  eq('设置只有两个字段', Object.keys(res.settings).sort().join(','), 'enabled,trigger');
+  eq('设置只有三个字段', Object.keys(res.settings).sort().join(','), 'disabledSites,enabled,trigger');
   check('不含 apiKey/接口地址', !JSON.stringify(res).includes('sk-test') && !JSON.stringify(res).includes('deepseek'));
 }
 
@@ -442,6 +442,58 @@ const DEFAULT_STORE = () => ({
   eq('只请求一次（不盲目重试）', calls.length, 1);
   check('错误里不含服务端原文', !res.error.includes('internal-host-42'), res.error);
   check('错误提示是中文排查建议', /接口地址与模型名/.test(res.error), res.error);
+}
+
+/* ------------------------------------- 21. 瞬时故障重试（网关/网络抖动） */
+
+{
+  const { sandbox, calls } = boot({
+    store: { get: DEFAULT_STORE },
+    fetchImpl: async (_u, _o, count) => (count === 1
+      ? { ok: false, status: 503, text: async () => 'busy' }
+      : okResponse({ words: [{ word: 'lucid', pos: '', meaning: 'm' }] }))
+  });
+  const res = await ask(sandbox, { type: 'se-analyze', text: 'lucid', context: '' });
+  check('503 后重试成功', res.ok === true, JSON.stringify(res));
+  eq('503 共请求两次', calls.length, 2);
+}
+
+{
+  const { sandbox, calls } = boot({
+    store: { get: DEFAULT_STORE },
+    fetchImpl: async (_u, _o, count) => {
+      if (count === 1) throw new TypeError('fetch failed');
+      return okResponse({ words: [] });
+    }
+  });
+  const res = await ask(sandbox, { type: 'se-analyze', text: 'lucid', context: '' });
+  check('网络抖动后重试成功', res.ok === true, JSON.stringify(res));
+  eq('网络错误共请求两次', calls.length, 2);
+}
+
+{
+  const { sandbox, calls } = boot({
+    store: { get: DEFAULT_STORE },
+    fetchImpl: async () => { throw new TypeError('fetch failed'); }
+  });
+  const res = await ask(sandbox, { type: 'se-analyze', text: 'lucid', context: '' });
+  eq('连续失败最终报错', res.ok, false);
+  eq('连续失败只重试一次', calls.length, 2);
+  check('错误提示是网络问题', /网络请求失败|请求超时/.test(res.error), res.error);
+}
+
+/* ------------------------------------- 22. 站点停用名单透传（不含密钥） */
+
+{
+  const store = DEFAULT_STORE();
+  store.settings.disabledSites = ['a.example', 'b.example'];
+  const { sandbox, sentToTabs } = boot({ store: { get: () => store }, fetchImpl: async () => okResponse({ words: [] }) });
+  const res = await ask(sandbox, { type: 'se-ui-settings' });
+  check('设置里带停用名单', JSON.stringify(res.settings.disabledSites) === JSON.stringify(['a.example', 'b.example']),
+    JSON.stringify(res.settings));
+  sandbox.__onChanged({ settings: { newValue: store.settings } }, 'local');
+  await new Promise((r) => setTimeout(r, 10));
+  check('广播里也带停用名单', JSON.stringify(sentToTabs[0].msg.settings.disabledSites) === JSON.stringify(['a.example', 'b.example']));
 }
 
 console.log(`background.js: ${passed} passed, ${failures.length} failed`);if (failures.length) {

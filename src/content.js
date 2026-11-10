@@ -15,7 +15,7 @@
   var L = window.SELib;
   if (!L) return;
 
-  var DEFAULTS = { enabled: true, trigger: 'button' };
+  var DEFAULTS = { enabled: true, trigger: 'button', disabledSites: [] };
   var MAX_SELECTION = 1200;
   var CACHE_MAX = 40;
   var CACHE_TTL = 10 * 60 * 1000;
@@ -654,9 +654,17 @@
 
   /* -------------------------------------------------------------- 事件绑定 */
 
+  function isSiteDisabled() {
+    var host = '';
+    try { host = location.hostname; } catch (e) { host = ''; }
+    if (!host) return false;
+    var sites = settings.disabledSites || [];
+    return sites.indexOf(host) >= 0;
+  }
+
   function onMouseUp(e) {
     mouseIsDown = false;
-    if (!settings.enabled) return;
+    if (!settings.enabled || isSiteDisabled()) return;
     if (e.button !== 0) return;
     setTimeout(function () {
       var found = readSelection();
@@ -708,7 +716,7 @@
     }
     // 键盘（Shift+方向键等）做出新选区时没有 mousedown：
     // 旧面板若还展示着上一条结果，立刻关掉并给新选区出圆钮，避免「新查询显示旧内容」
-    if (!settings.enabled || !panelOpen || mouseIsDown) return;
+    if (!settings.enabled || isSiteDisabled() || !panelOpen || mouseIsDown) return;
     var found = readSelection();
     if (!found) return;
     if (lastPayload && found.text === lastPayload.text) return;
@@ -733,7 +741,8 @@
     if (!next) return;
     var wasEnabled = settings.enabled;
     settings = Object.assign({}, DEFAULTS, next);
-    if (wasEnabled && !settings.enabled) {
+    if (!Array.isArray(settings.disabledSites)) settings.disabledSites = [];
+    if ((wasEnabled && !settings.enabled) || isSiteDisabled()) {
       closePanel();
       hideBubble();
     }
@@ -761,6 +770,10 @@
     if (msg.type !== 'se-trigger') return;
     if (!settings.enabled) {
       sendResponse({ ok: false, error: '划词查询已停用（可在扩展设置里打开）' });
+      return true;
+    }
+    if (isSiteDisabled()) {
+      sendResponse({ ok: false, error: '已在本站停用（可在工具栏弹窗里恢复）' });
       return true;
     }
     var found = readSelection();
