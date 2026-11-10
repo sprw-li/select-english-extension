@@ -12,6 +12,7 @@ var DEFAULT_SETTINGS = {
   enabled: true,
   trigger: 'button',              // 'button' | 'auto'
   demoMode: false,                // true = 不联网，返回内置示例
+  recordHistory: false,           // 默认不记录查询历史（只有主动「收藏」才留内容）
   apiBase: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
   temperature: 0.3,
@@ -24,11 +25,42 @@ var HISTORY_MAX = 300;
 var REQUEST_TIMEOUT = 25000;   // 留出余量，避免 MV3 worker 被回收
 var cache = new Map();
 
+// 把本地存储设为「只有扩展页面/后台可读」：注入网页的 content script 从此读不到
+// storage.local（收藏、历史、Key 全部经由后台消息中转）。Chromium 102+ 支持。
+try {
+  if (chrome.storage.local.setAccessLevel) {
+    chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }).catch(function () {});
+  }
+} catch (e) { /* 旧版本忽略 */ }
+
 chrome.storage.onChanged.addListener(function (changes, area) {
-  if (area === 'local' && (changes.settings || changes.credentials)) {
+  if (area !== 'local') return;
+  if (changes.settings || changes.credentials) {
     cache.clear();   // 改过接口/模型/Key 之后立刻作废旧结果
   }
+  if (changes.settings) broadcastSettings(changes.settings.newValue);
 });
+
+/** 把（不含密钥的）设置变化推给所有已打开的页面，content script 不再监听 storage */
+function broadcastSettings(settings) {
+  try {
+    chrome.tabs.query({}, function (tabs) {
+      var msg = {
+        type: 'se-settings-changed',
+        settings: {
+          enabled: (settings || {}).enabled !== false,
+          trigger: (settings || {}).trigger === 'auto' ? 'auto' : 'button'
+        }
+      };
+      (tabs || []).forEach(function (tab) {
+        if (!tab || !tab.id) return;
+        chrome.tabs.sendMessage(tab.id, msg, function () {
+          void chrome.runtime.lastError; // 页面没注入 content script 时忽略
+        });
+      });
+    });
+  } catch (e) { /* 忽略 */ }
+}
 
 /* ------------------------------------------------------------- 配置读取 */
 
@@ -49,10 +81,10 @@ function joinEndpoint(base) {
   return b + '/v1/chat/completions';
 }
 
-/** 有些网关把「不支持 response_format」包在 400/404/422 里返回 */
+/** 只有服务端明确说「不支持 response_format 之类」时才降级重试，避免填错地址也白请求一次 */
 function looksLikeFormatRejection(status, detail) {
-  if (status === 400 || status === 404 || status === 422) return true;
-  return /response_format|json_object|unknown.?field|unsupported/i.test(detail || '') && status < 500;
+  if (status >= 500) return false;
+  return /response_format|json_object|unknown.?field|unsupported.?parameter/i.test(detail || '');
 }
 
 /* --------------------------------------------------------------- 请求层 */
@@ -137,10 +169,14 @@ async function readDetail(res) {
 }
 
 function httpError(status, detail) {
+  // 服务端原文只进控制台，不显示在网页小窗里（可能含内部信息/HTML）
+  if (detail) {
+    try { console.warn('[SelectEnglish] HTTP ' + status + ':', detail); } catch (e) { /* 忽略 */ }
+  }
   if (status === 401 || status === 403) {
     return new Error('鉴权失败（HTTP ' + status + '），请检查 API Key 是否正确');
   }
-  return new Error('接口返回 HTTP ' + status + (detail ? '：' + detail : ''));
+  return new Error('接口返回 HTTP ' + status + '，请检查接口地址与模型名');
 }
 
 /* --------------------------------------------------------------- 业务层 */
@@ -238,6 +274,40 @@ async function recordHistory(cfg, info, analysis) {
   } catch (e) { /* 忽略 */ }
 }
 
+/* 收藏：content script 没有 storage 权限，统一由后台读写 */
+function trimFavorites(list) {
+  var out = list.slice(0, 300);
+  while (out.length > 1 && JSON.stringify(out).length > 4 * 1024 * 1024) out.pop();
+  return out;
+}
+
+async function handleFavoriteToggle(msg) {
+  var data = await chrome.storage.local.get({ favorites: [] });
+  var favorites = Array.isArray(data.favorites) ? data.favorites : [];
+  var savedId = msg && msg.savedId;
+
+  if (savedId) {
+    favorites = favorites.filter(function (f) { return f.id !== savedId; });
+    await chrome.storage.local.set({ favorites: trimFavorites(favorites) });
+    return { ok: true, savedId: null };
+  }
+
+  var payload = (msg && msg.payload) || {};
+  if (!payload.text) throw new Error('收藏内容为空');
+  var item = {
+    id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    text: String(payload.text).slice(0, 2000),
+    context: String(payload.context || '').slice(0, 4000),
+    title: String(payload.title || '').slice(0, 300),
+    url: String(payload.url || '').slice(0, 2000),
+    analysis: payload.analysis || {},
+    createdAt: new Date().toISOString()
+  };
+  favorites.unshift(item);
+  await chrome.storage.local.set({ favorites: trimFavorites(favorites) });
+  return { ok: true, savedId: item.id };
+}
+
 async function handleTest() {
   var cfg = await readConfig();
   if (cfg.settings.demoMode) {
@@ -278,10 +348,33 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   }
 
   if (msg.type === 'se-get-settings') {
-    // 注意：绝不把 API Key 交给 content script
+    // 只返回 UI 需要的开关，绝不把 API Key / 接口配置交给 content script
     readConfig().then(function (cfg) {
-      sendResponse({ ok: true, settings: cfg.settings, hasKey: !!cfg.apiKey });
+      sendResponse({
+        ok: true,
+        settings: { enabled: cfg.settings.enabled !== false, trigger: cfg.settings.trigger === 'auto' ? 'auto' : 'button' },
+        hasKey: !!cfg.apiKey
+      });
     }, function (err) {
+      sendResponse({ ok: false, error: String((err && err.message) || err) });
+    });
+    return true;
+  }
+
+  if (msg.type === 'se-ui-settings') {
+    readConfig().then(function (cfg) {
+      sendResponse({
+        ok: true,
+        settings: { enabled: cfg.settings.enabled !== false, trigger: cfg.settings.trigger === 'auto' ? 'auto' : 'button' }
+      });
+    }, function (err) {
+      sendResponse({ ok: false, error: String((err && err.message) || err) });
+    });
+    return true;
+  }
+
+  if (msg.type === 'se-favorite-toggle') {
+    handleFavoriteToggle(msg).then(sendResponse, function (err) {
       sendResponse({ ok: false, error: String((err && err.message) || err) });
     });
     return true;

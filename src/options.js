@@ -6,7 +6,7 @@
 var DEFAULTS = {
   enabled: true,
   trigger: 'button',
-  recordHistory: true,
+  recordHistory: false,
   demoMode: false,
   apiBase: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',

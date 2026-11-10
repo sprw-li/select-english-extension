@@ -57,6 +57,7 @@ check('lib.js 先于 content.js 注入', (cs.js || []).indexOf('src/lib.js') >= 
 
 const contentSrc = readFileSync(path.join(root, 'src/content.js'), 'utf8');
 check('content script 不读取 API Key', !/credentials/.test(contentSrc) && !/apiKey/.test(contentSrc));
+check('content script 完全没有 storage 访问', !/chrome\.storage/.test(contentSrc));
 check('content script 不使用 innerHTML', !/\.innerHTML\s*=|\[\s*['"]innerHTML['"]\s*\]/.test(contentSrc));
 check('content script 使用 closed shadow root', /attachShadow\s*\(\s*\{\s*mode:\s*'closed'\s*\}/.test(contentSrc));
 
@@ -71,6 +72,8 @@ for (const t of ['tests/lib.test.mjs', 'tests/background.test.mjs', 'tests/conte
 
 const bgSrc = readFileSync(path.join(root, 'src/background.js'), 'utf8');
 check('background 不把 apiKey 回传 content script', !/settings:\s*cfg\.settings,\s*apiKey/.test(bgSrc));
+check('background 关闭了 content script 的 storage 访问',
+  /setAccessLevel\(\{\s*accessLevel:\s*'TRUSTED_CONTEXTS'/.test(bgSrc));
 
 console.log(`structure: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {

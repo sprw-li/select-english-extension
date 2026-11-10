@@ -158,6 +158,17 @@ check('md has heading', md.includes('## 1. persevered'));
 check('md has context quote', md.includes('> Despite the setback'));
 check('md has sections', md.includes('生词') && md.includes('固定表达'));
 
+/* ---------------------------------------------------------- looksLikeEnglish */
+
+check('英文句子通过', L.looksLikeEnglish('Despite the setback, she persevered.'));
+check('单个英文单词通过', L.looksLikeEnglish('serendipity'));
+check('中文不通过', L.looksLikeEnglish('这是中文段落') === false);
+check('日文不通过', L.looksLikeEnglish('これは日本語です') === false);
+check('韩文不通过', L.looksLikeEnglish('한국어 문장입니다') === false);
+check('中英混排但以英文为主通过', L.looksLikeEnglish('The word 词 means word.') === true);
+check('纯数字/符号不通过', L.looksLikeEnglish('12345 !!!') === false);
+check('空字符串不通过', L.looksLikeEnglish('') === false);
+
 /* ---------------------------------------------------------------- 结果 */
 
 const demo = L.demoAnalysis('persevered');

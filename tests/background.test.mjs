@@ -28,6 +28,7 @@ function boot({ store, fetchImpl }) {
   const mem = Object.assign({}, store.get());
   const createdMenus = [];
   const sentToTabs = [];
+  const accessLevels = [];
   const sandbox = {
     console,
     self: {},
@@ -42,7 +43,8 @@ function boot({ store, fetchImpl }) {
       storage: {
         local: {
           get: async (defaults) => Object.assign({}, defaults, mem),
-          set: async (value) => { writes.push(value); Object.assign(mem, value); }
+          set: async (value) => { writes.push(value); Object.assign(mem, value); },
+          setAccessLevel: async (opts) => { accessLevels.push(opts); }
         },
         onChanged: { addListener(fn) { sandbox.__onChanged = fn; } }
       },
@@ -60,7 +62,7 @@ function boot({ store, fetchImpl }) {
         onClicked: { addListener(fn) { sandbox.__onMenuClicked = fn; } }
       },
       tabs: {
-        query(_q, cb) { cb([]); },
+        query(_q, cb) { cb([{ id: 1 }, { id: 2 }]); },
         sendMessage(tabId, msg, cb) { sentToTabs.push({ tabId, msg }); if (cb) cb(); }
       }
     }
@@ -70,7 +72,7 @@ function boot({ store, fetchImpl }) {
     vm.runInContext(readFileSync(path.join(root, 'src', file), 'utf8'), sandbox, { filename: file });
   };
   vm.runInContext(readFileSync(path.join(root, 'src', 'background.js'), 'utf8'), sandbox, { filename: 'background.js' });
-  return { sandbox, calls, writes, mem, createdMenus, sentToTabs };
+  return { sandbox, calls, writes, mem, createdMenus, sentToTabs, accessLevels };
 }
 
 function ask(sandbox, message) {
@@ -89,7 +91,7 @@ function okResponse(payload) {
 }
 
 const DEFAULT_STORE = () => ({
-  settings: { apiBase: 'https://api.deepseek.com/v1', model: 'deepseek-chat', temperature: 0.3, jsonMode: true, enabled: true, trigger: 'button' },
+  settings: { apiBase: 'https://api.deepseek.com/v1', model: 'deepseek-chat', temperature: 0.3, jsonMode: true, enabled: true, trigger: 'button', recordHistory: true },
   credentials: { apiKey: 'sk-test-key' }
 });
 
@@ -367,8 +369,82 @@ const DEFAULT_STORE = () => ({
   eq('测试连接也不发请求', fetched, 0);
 }
 
-console.log(`background.js: ${passed} passed, ${failures.length} failed`);
-if (failures.length) {
+/* ------------------------------- 15. 存储访问级别：content script 读不到 storage */
+
+{
+  const { accessLevels } = boot({ store: { get: DEFAULT_STORE }, fetchImpl: async () => okResponse({ words: [] }) });
+  eq('设置过 storage 访问级别', accessLevels.length, 1);
+  eq('级别为 TRUSTED_CONTEXTS', accessLevels[0].accessLevel, 'TRUSTED_CONTEXTS');
+}
+
+/* ------------------------------------------- 16. 历史默认关闭 */
+
+{
+  const store = DEFAULT_STORE();
+  delete store.settings.recordHistory;   // 用户没动过这个开关
+  const { sandbox, mem } = boot({ store: { get: () => store }, fetchImpl: async () => okResponse({ words: [] }) });
+  await ask(sandbox, { type: 'se-analyze', text: 'lucid', context: 'c', pageTitle: 'T' });
+  eq('默认不写历史', (mem.history || []).length, 0);
+}
+
+/* ----------------------------------- 17. 收藏经后台读写（含取消与上限） */
+
+{
+  const { sandbox, mem } = boot({ store: { get: DEFAULT_STORE }, fetchImpl: async () => okResponse({ words: [] }) });
+  const add = await ask(sandbox, {
+    type: 'se-favorite-toggle',
+    savedId: null,
+    payload: { text: 'persevered', context: 'ctx', title: 'T', url: 'https://e.x/', analysis: { words: [{ word: 'persevered', meaning: '坚持' }] } }
+  });
+  check('收藏成功', add.ok === true, JSON.stringify(add));
+  check('返回收藏 id', typeof add.savedId === 'string' && add.savedId.length > 0);
+  eq('写入一条收藏', mem.favorites.length, 1);
+  eq('收藏原文', mem.favorites[0].text, 'persevered');
+
+  const remove = await ask(sandbox, { type: 'se-favorite-toggle', savedId: add.savedId, payload: null });
+  check('取消收藏成功', remove.ok === true);
+  eq('取消后为空', mem.favorites.length, 0);
+  eq('取消后无 id', remove.savedId, null);
+}
+
+/* ------------------------------------- 18. UI 设置接口不含 Key / 接口地址 */
+
+{
+  const { sandbox } = boot({ store: { get: DEFAULT_STORE }, fetchImpl: async () => okResponse({ words: [] }) });
+  const res = await ask(sandbox, { type: 'se-ui-settings' });
+  eq('返回 ok', res.ok, true);
+  eq('设置只有两个字段', Object.keys(res.settings).sort().join(','), 'enabled,trigger');
+  check('不含 apiKey/接口地址', !JSON.stringify(res).includes('sk-test') && !JSON.stringify(res).includes('deepseek'));
+}
+
+/* --------------------------- 19. 设置变化广播给页面（不含密钥） */
+
+{
+  const { sandbox, sentToTabs } = boot({ store: { get: DEFAULT_STORE }, fetchImpl: async () => okResponse({ words: [] }) });
+  sandbox.__onChanged({ settings: { newValue: { enabled: false, trigger: 'auto' } } }, 'local');
+  await new Promise((r) => setTimeout(r, 10));
+  check('广播到每个标签页', sentToTabs.length === 2, JSON.stringify(sentToTabs));
+  eq('消息类型', sentToTabs[0].msg.type, 'se-settings-changed');
+  eq('enabled 透传', sentToTabs[0].msg.settings.enabled, false);
+  eq('trigger 透传', sentToTabs[0].msg.settings.trigger, 'auto');
+  check('广播不含密钥', !JSON.stringify(sentToTabs).includes('sk-test'));
+}
+
+/* --------------------------- 20. 404 且无格式提示 → 不重试、不泄露服务端原文 */
+
+{
+  const { sandbox, calls } = boot({
+    store: { get: DEFAULT_STORE },
+    fetchImpl: async () => ({ ok: false, status: 404, text: async () => '<html>not found: internal-host-42</html>' })
+  });
+  const res = await ask(sandbox, { type: 'se-analyze', text: 'lucid', context: '' });
+  eq('404 直接失败', res.ok, false);
+  eq('只请求一次（不盲目重试）', calls.length, 1);
+  check('错误里不含服务端原文', !res.error.includes('internal-host-42'), res.error);
+  check('错误提示是中文排查建议', /接口地址与模型名/.test(res.error), res.error);
+}
+
+console.log(`background.js: ${passed} passed, ${failures.length} failed`);if (failures.length) {
   failures.forEach((f) => console.error('  ✗ ' + f));
   process.exit(1);
 }

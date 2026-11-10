@@ -140,6 +140,8 @@
     if (isEditable(range.commonAncestorContainer)) return null;
     var text = sel.toString().replace(/\s+/g, ' ').trim();
     if (!text) return null;
+    // 只处理以英文为主的选区：中文/日文/韩文选区不弹窗、不发请求
+    if (!L.looksLikeEnglish(text)) return null;
     var rect = range.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) return null;
     return { text: text.slice(0, MAX_SELECTION), rect: rect, range: range };
@@ -492,58 +494,32 @@
     return lines.join('\n');
   }
 
-  function trimFavorites(list) {
-    var out = list.slice(0, 300);
-    while (out.length > 1 && JSON.stringify(out).length > 4 * 1024 * 1024) out.pop();
-    return out;
-  }
-
   function toggleSave(btn) {
     if (!lastAnalysis || !lastPayload) return;
-    var payload = { text: lastPayload.text, context: lastPayload.context };
-    var analysis = lastAnalysis;
-
     var fail = function () {
       btn.textContent = '!';
       btn.title = '收藏失败：存储空间不足，或扩展已重新加载（刷新页面即可）';
       setTimeout(function () { btn.textContent = savedId ? '★' : '☆'; }, 1500);
     };
 
-    var store = function (favorites) {
-      return chrome.storage.local.set({ favorites: favorites });
-    };
-
-    try {
-      chrome.storage.local.get({ favorites: [] }, function (data) {
-        if (chrome.runtime.lastError) { fail(); return; }
-        var favorites = Array.isArray(data.favorites) ? data.favorites : [];
-        if (savedId) {
-          favorites = favorites.filter(function (f) { return f.id !== savedId; });
-          savedId = null;
-          btn.textContent = '☆';
-          btn.removeAttribute('data-on');
-          store(trimFavorites(favorites));
-          return;
-        }
-        var item = {
-          id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-          text: payload.text,
-          context: payload.context,
-          title: document.title,
-          url: location.href,
-          analysis: analysis,
-          createdAt: new Date().toISOString()
-        };
-        favorites.unshift(item);
-        store(trimFavorites(favorites)).then(function () {
-          savedId = item.id;
-          btn.textContent = '★';
-          btn.setAttribute('data-on', '1');
-        }, fail);
-      });
-    } catch (e) {
-      fail();
-    }
+    // content script 没有 storage 访问权限，收藏一律交给后台写入
+    send({
+      type: 'se-favorite-toggle',
+      savedId: savedId || null,
+      payload: {
+        text: lastPayload.text,
+        context: lastPayload.context,
+        title: document.title,
+        url: location.href,
+        analysis: lastAnalysis
+      }
+    }).then(function (res) {
+      if (!res || !res.ok) { fail(); return; }
+      savedId = res.savedId || null;
+      btn.textContent = savedId ? '★' : '☆';
+      if (savedId) btn.setAttribute('data-on', '1');
+      else btn.removeAttribute('data-on');
+    }).catch(fail);
   }
 
   function analyze(text, context) {
@@ -764,26 +740,25 @@
   }
 
   function loadSettings() {
-    try {
-      chrome.storage.local.get({ settings: {} }, function (data) {
-        if (chrome.runtime.lastError) return;
-        applySettings(data && data.settings);
-      });
-    } catch (e) { /* 扩展已重新加载，刷新页面即可 */ }
+    // content script 没有 storage 访问权限，设置经由后台消息获取
+    send({ type: 'se-ui-settings' }).then(function (res) {
+      if (res && res.ok) applySettings(res.settings);
+    }).catch(function () { /* 扩展已重新加载，刷新页面即可 */ });
   }
 
   loadSettings();
 
-  try {
-    chrome.storage.onChanged.addListener(function (changes, area) {
-      if (area !== 'local' || !changes.settings) return;
-      applySettings(changes.settings.newValue);
-      cache.clear();   // 换了模型/接口后，别再拿旧结果糊弄人
-    });
-  } catch (e) { /* 忽略 */ }
-
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
-    if (!msg || msg.type !== 'se-trigger') return;
+    if (!msg) return;
+
+    if (msg.type === 'se-settings-changed') {
+      applySettings(msg.settings);
+      cache.clear();   // 换了模型/接口/开关后，别再拿旧结果糊弄人
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (msg.type !== 'se-trigger') return;
     if (!settings.enabled) {
       sendResponse({ ok: false, error: '划词查询已停用（可在扩展设置里打开）' });
       return true;

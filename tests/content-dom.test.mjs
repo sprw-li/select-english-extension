@@ -42,7 +42,7 @@ const CANNED = {
 };
 
 const dom = new JSDOM(
-  `<!doctype html><html><head><title>测试页</title></head><body><p id="t">${PARAGRAPH}</p><p id="u">Serendipity means finding something good without looking for it.</p></body></html>`,
+  `<!doctype html><html><head><title>测试页</title></head><body><p id="t">${PARAGRAPH}</p><p id="u">Serendipity means finding something good without looking for it.</p><p id="zh">这是中文段落，用来验证不会触发查询。</p></body></html>`,
   { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.com/article' }
 );
 const win = dom.window;
@@ -58,37 +58,31 @@ win.Element.prototype.attachShadow = function (init) {
   return shadowRoot;
 };
 
-/* ---- chrome.* 假实现 ---- */
+/* ---- chrome.* 假实现（content script 现在不碰 storage，全靠消息） ---- */
 const messages = [];
-const storageWrites = [];
+const favoriteCalls = [];
+let favoriteSavedId = null;
 win.chrome = {
   runtime: {
     lastError: undefined,
     sendMessage(msg, cb) {
       messages.push(msg);
-      const reply = msg.type === 'se-analyze'
-        ? { ok: true, analysis: CANNED, meta: { model: 'deepseek-chat', ms: 12 } }
-        : { ok: true };
+      let reply;
+      if (msg.type === 'se-analyze') {
+        reply = { ok: true, analysis: CANNED, meta: { model: 'deepseek-chat', ms: 12 } };
+      } else if (msg.type === 'se-ui-settings') {
+        reply = { ok: true, settings: { enabled: true, trigger: 'button' } };
+      } else if (msg.type === 'se-favorite-toggle') {
+        favoriteCalls.push(msg);
+        favoriteSavedId = msg.savedId ? null : 'fav-1';
+        reply = { ok: true, savedId: favoriteSavedId };
+      } else {
+        reply = { ok: true };
+      }
       setTimeout(() => cb && cb(reply), 0);
     },
     onMessage: {
       addListener(fn) { win.__seOnMessage = fn; }
-    }
-  },
-  storage: {
-    local: {
-      get(defaults, cb) {
-        if (typeof defaults === 'function') defaults({});
-        else cb && cb(defaults);
-      },
-      set(value, cb) {
-        storageWrites.push(value);
-        if (cb) cb();
-        return Promise.resolve();
-      }
-    },
-    onChanged: {
-      addListener(fn) { win.__seOnChanged = fn; }
     }
   }
 };
@@ -131,10 +125,11 @@ check('此时还没有面板', !shadow.querySelector('.se-panel'));
 bubble.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
 await wait(30);
 
-eq('向后台发了一条消息', messages.length, 1);
-eq('消息类型', messages[0].type, 'se-analyze');
-eq('消息文本', messages[0].text, PARAGRAPH);
-check('消息带上下文', typeof messages[0].context === 'string' && messages[0].context.length > 0);
+const analyzeMsgs = messages.filter((m) => m.type === 'se-analyze');
+eq('只发了一条查询消息', analyzeMsgs.length, 1);
+eq('消息类型', analyzeMsgs[0].type, 'se-analyze');
+eq('消息文本', analyzeMsgs[0].text, PARAGRAPH);
+check('消息带上下文', typeof analyzeMsgs[0].context === 'string' && analyzeMsgs[0].context.length > 0);
 check('消息里不含 API Key', !JSON.stringify(messages).includes('apiKey') && !JSON.stringify(messages).includes('sk-'));
 
 const panel = shadow.querySelector('.se-panel');
@@ -150,16 +145,20 @@ check('渲染了例句', text.includes('They helped turn the tide.'));
 check('页脚显示模型', text.includes('deepseek-chat'));
 check('没有把模型输出当 HTML 解析', panel && panel.querySelectorAll('script').length === 0);
 
-/* ---- 3. 收藏 ---- */
+/* ---- 3. 收藏（经后台消息，content 无 storage 权限） ---- */
 const saveBtn = shadow.querySelector('[data-action="save"]');
 check('有收藏按钮', !!saveBtn);
 saveBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
-await wait(10);
-const saved = storageWrites.find((w) => w.favorites);
-check('写入收藏', !!saved && saved.favorites.length === 1);
-eq('收藏的原文', saved && saved.favorites[0].text, PARAGRAPH);
-eq('收藏的释义', saved && saved.favorites[0].analysis.words[0].meaning, '坚持不懈');
+await wait(20);
+check('向后台发收藏消息', favoriteCalls.length === 1);
+eq('收藏消息类型', favoriteCalls[0] && favoriteCalls[0].type, 'se-favorite-toggle');
+eq('收藏的原文', favoriteCalls[0] && favoriteCalls[0].payload.text, PARAGRAPH);
+eq('收藏的释义', favoriteCalls[0] && favoriteCalls[0].payload.analysis.words[0].meaning, '坚持不懈');
 eq('收藏按钮变为已保存', saveBtn.textContent, '★');
+saveBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+await wait(20);
+check('再点一次走取消收藏', favoriteCalls.length === 2 && favoriteCalls[1].savedId === 'fav-1');
+eq('取消后按钮还原', saveBtn.textContent, '☆');
 
 /* ---- 3b. 同一选区再次查询 → 命中 content script 缓存，不重复请求 ---- */
 const beforeCount = messages.length;
@@ -184,7 +183,22 @@ win.document.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true }));
 win.document.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true }));
 await wait(10);
 check('空白处点击不会新建面板', !shadow.querySelector('.se-panel'));
-eq('没有发出多余消息', messages.length, 1);
+eq('没有发出多余消息', messages.filter((m) => m.type === 'se-analyze').length, 1);
+
+/* ---- 5b. 选中中文：不弹窗、不发请求 ---- */
+const rZh = win.document.createRange();
+rZh.selectNodeContents(win.document.getElementById('zh'));
+const sZh = win.getSelection();
+sZh.removeAllRanges();
+sZh.addRange(rZh);
+const beforeZh = messages.filter((m) => m.type === 'se-analyze').length;
+win.document.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true, button: 0 }));
+await wait(20);
+eq('中文选区不发请求', messages.filter((m) => m.type === 'se-analyze').length, beforeZh);
+const bubbleZh = win.__seRoot.querySelector('.se-bubble');
+check('中文选区不出圆钮', !bubbleZh || bubbleZh.style.display === 'none');
+
+check('启动时向后台要过设置', messages.some((m) => m.type === 'se-ui-settings'));
 
 /* ---- 6. SPA 把宿主连根拔掉后，小圆钮还能重新出现（回归：findings #1） ---- */
 const oldHost = win.document.getElementById('select-english-host');
@@ -252,8 +266,9 @@ eq('请求的是新文本', messages[messages.length - 1].text, 'Serendipity mea
 const panel5 = win.__seRoot.querySelector('.se-panel');
 check('新面板渲染的是新内容', !!panel5 && panel5.textContent.includes('Serendipity'));
 
-/* ---- 7. 停用后快捷键与划词都不再触发 ---- */
-win.__seOnChanged({ settings: { newValue: { enabled: false, trigger: 'button' } } }, 'local');
+/* ---- 7. 停用后快捷键与划词都不再触发（设置变化经后台消息广播） ---- */
+win.__seOnMessage({ type: 'se-settings-changed', settings: { enabled: false, trigger: 'button' } }, {}, () => {});
+await wait(10);
 const reply = await new Promise((resolve) => {
   const keep = win.__seOnMessage({ type: 'se-trigger' }, {}, resolve);
   if (keep !== true) resolve(undefined);
@@ -268,7 +283,8 @@ eq('停用后不再发请求', messages.length, beforeDisabled);
 check('停用后小圆钮隐藏', win.__seRoot.querySelector('.se-bubble').style.display === 'none');
 
 /* ---- 8. 重新启用后快捷键可用（改设置会清缓存，所以会重新发请求） ---- */
-win.__seOnChanged({ settings: { newValue: { enabled: true, trigger: 'button' } } }, 'local');
+win.__seOnMessage({ type: 'se-settings-changed', settings: { enabled: true, trigger: 'button' } }, {}, () => {});
+await wait(10);
 const beforeEnabled = messages.length;
 const reply2 = await new Promise((resolve) => {
   const keep = win.__seOnMessage({ type: 'se-trigger' }, {}, resolve);

@@ -1,6 +1,22 @@
 MIT License
 
-Copyright (c) 2026 SelectEnglish browser extension contributors
+Copyright (c) 2026 SelectEnglish 划词阅读助手（浏览器版）contributors
+
+----
+
+本扩展的交互设计、产品文案与提示词思路参考自
+James-Yao-xj/SelectEnglish（macOS 原生 App，MIT License）：
+https://github.com/James-Yao-xj/SelectEnglish
+
+上游项目使用 MIT License 发布，其原始版权声明如下（按 MIT 要求保留）：
+
+Copyright (c) James-Yao-xj and SelectEnglish contributors,
+licensed under the MIT License
+(https://github.com/James-Yao-xj/SelectEnglish/blob/main/LICENSE)
+
+本仓库仅包含独立编写的浏览器扩展实现，不包含上游 Swift/AppKit 源码。
+
+----
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

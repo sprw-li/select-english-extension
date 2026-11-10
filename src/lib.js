@@ -22,6 +22,17 @@
     '除上述字段外不要输出多余字段；没有内容的数组写 []，没有整句解释时 sentence 写 {"translation":"","explanation":""}。'
   ].join('\n');
 
+  /** 粗略判断选区是不是以英文为主；中文/日文为主的选区不弹窗、不发送。 */
+  function looksLikeEnglish(value) {
+    var s = String(value == null ? '' : value);
+    var latin = s.match(/[A-Za-z]/g);
+    var cjk = s.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g);
+    var latinCount = latin ? latin.length : 0;
+    var cjkCount = cjk ? cjk.length : 0;
+    if (latinCount < 2) return false;
+    return latinCount >= cjkCount * 2;
+  }
+
   function truncate(value, max) {
     if (!(max >= 1)) return '';
     var s = value == null ? '' : String(value);
@@ -369,6 +380,7 @@
     isEmptyAnalysis: isEmptyAnalysis,
     toPlainText: toPlainText,
     demoAnalysis: demoAnalysis,
+    looksLikeEnglish: looksLikeEnglish,
     pickVoice: pickVoice,
     escapeHtml: escapeHtml,
     ankiBack: ankiBack,

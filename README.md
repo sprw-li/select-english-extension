@@ -35,19 +35,23 @@
 ## 使用
 
 - 用鼠标选中一段英文 → 出现小圆钮「译」→ 点它；也可以 **在选中文本上点右键 →「查询选中的英文」**，或按 <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>。
+- 只认**英文为主**的选区；中文、日文、韩文不会被弹窗，也不会把内容发出去。
 - 小窗顺序固定：**生词**（词性 + 中文释义，优先六级及以上词汇、专业词、熟词僻义；单独选一个词时一定解释这个词）→ **整句解释**（译文 + 语境解释）→ **固定表达**（释义 + 例句）。
 - 小窗右上角：**🔊** 朗读选中内容（每个生词后还有单独的小喇叭）、**☆** 收藏、**⧉** 复制、**✕** 关闭；点空白处或按 <kbd>Esc</kbd> 也可关闭。朗读用浏览器自带语音，优先美音，不走 API、不计费。
 - **按住小窗顶部或底部可以拖动**，本次会话内会记住摆放位置；小窗和设置页都会跟随系统深色模式自动切换成深色纸面。
 - 同一选区会复用最近一次结果（10 分钟内）；修改接口/模型/Key 后缓存自动作废。
-- 每次查询自动记入 **历史**（可在设置里关掉，最多 300 条，只存本机）。
+- **查询历史默认关闭**（只有点 ☆ 收藏才保存）；需要时可在设置里打开，最多 300 条，只存本机。
 - 收藏和历史都在设置页查看/删除，并可导出 **Anki CSV**（导入 Anki 时勾选「允许在字段中使用 HTML」）、**Markdown** 或 **JSON**。
 
 ## 隐私
 
 - 只有你主动查询时，才会把 **选中的英文 + 所在句子上下文 + 网页标题** 发给你自己填的 AI 接口；演示模式下完全不联网。
-- 不做任何遥测，不连任何第三方服务器，收藏和查询历史只在本机（历史可在设置里关闭或随时清空）。
-- API Key 只存在扩展自身的本地存储里（设置页与后台可读）；**网页脚本和页面里的代码都拿不到**，也不会写进任何文件。修改接口/模型/Key 后会自动作废缓存。
+- **只处理英文为主的选区**：选中中文/日文/韩文不会弹窗，也不会发请求（`auto` 模式同样生效）。
+- 不做任何遥测，不连任何第三方服务器。
+- **查询历史默认关闭**：只有你主动点 ☆ 收藏时才保存内容；想留历史可在设置里打开，最多 300 条，随时清空。
+- API Key 只存在扩展自身的本地存储里；后台已把该存储设为 `TRUSTED_CONTEXTS`——**注入网页的脚本连 storage 都没有访问权限**（它只能发消息给后台）。网页脚本更是拿不到。
 - 页面脚本无法读取小窗内容（closed Shadow DOM），模型输出一律按纯文本渲染（不使用 `innerHTML`）。
+- 接口报错时小窗只显示状态码与排查建议，服务端原文只写进扩展后台的控制台。
 - 朗读只调用浏览器自带的 `speechSynthesis`，文本不离开本机。
 
 ## 目录结构
@@ -66,13 +70,15 @@ select-english-extension/
 └─ tools/                 make_icons.py、ci.yml（工作流模板）
 ```
 
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 打包
 
 仓库根目录就是扩展根目录（`manifest.json` 在最外层）。在自己的克隆目录里：
 
 ```powershell
 New-Item -ItemType Directory -Force -Path dist | Out-Null
-Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE -DestinationPath "dist/select-english-extension-v0.3.0.zip" -Force
+Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE -DestinationPath "dist/select-english-extension-v0.3.1.zip" -Force
 ```
 
 `dist/` 已在 `.gitignore` 里。**API Key 永远不会进这个包**：它只存在浏览器本地存储中。
@@ -84,13 +90,13 @@ CI 工作流模板在 `tools/ci.yml`（跑测试 + 打 zip 构件）。启用方
 ## 测试
 
 ```powershell
-node tests\lib.test.mjs         # 提示词 / JSON 解析（含截断抢救）/ 归一化 / 朗读选声 / Anki … 70 项
-node tests\check-manifest.mjs   # MV3 结构、文件引用、安全不变量 ……………………………… 31 项
-node tests\background.test.mjs  # 后台全链路：请求/缓存/历史/菜单/演示模式（假 chrome+fetch）… 77 项
-node tests\content-dom.test.mjs # 划词交互 DOM 冒烟：圆钮/弹窗/收藏/朗读/拖动/启停/键盘选区 … 56 项
+node tests\lib.test.mjs         # 提示词 / JSON 解析 / 归一化 / 英文判定 / 朗读选声 / Anki … 78 项
+node tests\check-manifest.mjs   # MV3 结构、文件引用、安全不变量 ……………………………… 33 项
+node tests\background.test.mjs  # 后台全链路：请求/缓存/历史/菜单/演示/存储级别（假 chrome）… 99 项
+node tests\content-dom.test.mjs # 划词交互 DOM 冒烟：圆钮/弹窗/收藏/朗读/拖动/启停/中英文 … 62 项
 ```
 
-合计 234 项断言，全部通过。
+合计 272 项断言，全部通过。
 
 - `background.test.mjs` 与 `content-dom.test.mjs` 会真正执行 `src/background.js` 与 `src/content.js`，不是只做字符串检查。
 - `content-dom.test.mjs` 需要 jsdom（`npm i jsdom`，并把 `SE_JSDOM_DIR` 指向装它的目录；没装时该测试自动 SKIP 而不是失败）。
@@ -101,6 +107,7 @@ node tests\content-dom.test.mjs # 划词交互 DOM 冒烟：圆钮/弹窗/收藏
 - 不处理图片、扫描 PDF 的文字（原 App 同样不支持 OCR）。
 - 小说排版类整段选择可能命中 1500 字上限，超出部分会被截断。
 - 收藏最多保留 300 条 / 约 4 MB，历史最多 300 条（浏览器本地存储配额），超出会从最旧的开始丢。
+- 后台缓存活在 Service Worker 内存里，Worker 被回收后会清空（页面内的 10 分钟缓存不受影响，重复查询同一选区仍然走缓存）。
 - 接口地址以 `http://` 开头时，Key 会明文传输；建议只用 `https://`。
 - 朗读音质取决于系统安装的语音包（Windows 自带微软语音，英文足够用）。
 - 版式与提示词参考原项目（MIT），本扩展为独立实现。
