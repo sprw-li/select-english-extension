@@ -39,6 +39,10 @@
   var cache = new Map();  // 选区 key -> { analysis, at }（同一选区复用最近结果）
   var rememberedPos = null; // {left, top} 本会话内记住小窗被拖到哪儿
   var dragState = null;
+  var currentStreamId = null;   // 正在流式接收的请求 id
+  var streamBuffer = '';        // 已收到的原始文本
+  var lastStreamRender = 0;
+  var pendingPayload = null;    // 流式过程中用来渲染的 {text, context}
 
   /* ---------------------------------------------------------------- 基础 */
 
@@ -401,7 +405,8 @@
     p.appendChild(body);
 
     var bits = [];
-    if (meta && meta.model) bits.push(meta.model);
+    if (meta && meta.streaming) bits.push('生成中…');
+    else if (meta && meta.model) bits.push(meta.model);
     if (meta && typeof meta.ms === 'number') bits.push((meta.ms / 1000).toFixed(1) + 's');
     if (meta && meta.cached) bits.push('缓存');
     p.appendChild(buildFoot(bits.join(' · ')));
@@ -525,6 +530,11 @@
   function analyze(text, context) {
     if (!text) return;
     var mySeq = ++seq;   // 先占号：缓存命中也要作废在途的旧请求
+    var streamId = 'r' + mySeq + '_' + Date.now().toString(36);
+    currentStreamId = streamId;
+    streamBuffer = '';
+    lastStreamRender = 0;
+    pendingPayload = { text: text, context: context || '' };
     var cacheKey = text + '|' + (context || '').slice(0, 80);
     var hit = cache.get(cacheKey);
     if (hit && Date.now() - hit.at < CACHE_TTL) {
@@ -542,7 +552,8 @@
       text: text,
       context: context || '',
       pageTitle: document.title,
-      pageUrl: location.href
+      pageUrl: location.href,
+      streamId: streamId
     }).then(function (response) {
       if (mySeq !== seq) return;
       if (response && response.ok) {
@@ -763,6 +774,23 @@
     if (msg.type === 'se-settings-changed') {
       applySettings(msg.settings);
       cache.clear();   // 换了模型/接口/开关后，别再拿旧结果糊弄人
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (msg.type === 'se-stream') {
+      // 后台边收边推的中间结果：尽力解析不完整 JSON，能显示多少显示多少
+      if (!panelOpen || !msg.streamId || msg.streamId !== currentStreamId) return;
+      streamBuffer = String(msg.text || '');
+      var now = Date.now();
+      if (now - lastStreamRender < 120) return;
+      lastStreamRender = now;
+      var parsed = L.parsePartialJson(streamBuffer);
+      if (!parsed) return;
+      var payload = pendingPayload || { text: '', context: '' };
+      var partial = L.normalizeAnalysis(parsed, payload.text);
+      if (L.isEmptyAnalysis(partial)) return;
+      renderResult(payload, partial, { streaming: true });
       sendResponse({ ok: true });
       return true;
     }

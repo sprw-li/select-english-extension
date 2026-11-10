@@ -64,6 +64,55 @@
     ];
   }
 
+  /** 把一段被截断的 JSON 补齐括号/引号（用于流式输出边下边解析） */
+  function closePartialJson(body) {
+    var stack = [];
+    var inString = false;
+    var escaped = false;
+    for (var i = 0; i < body.length; i++) {
+      var ch = body.charAt(i);
+      if (inString) {
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\') { escaped = true; continue; }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') stack.push('}');
+      else if (ch === '[') stack.push(']');
+      else if (ch === '}' || ch === ']') { if (stack.length) stack.pop(); }
+    }
+    var out = body;
+    if (inString) out += '"';
+    while (stack.length) out += stack.pop();
+    return out;
+  }
+
+  /** 流式场景：对不完整的 JSON 文本尽力解析；失败返回 null（不抛错） */
+  function parsePartialJson(raw) {
+    var s = String(raw || '');
+    var start = s.indexOf('{');
+    if (start < 0) return null;
+    var body = s.slice(start);
+
+    var candidates = [closePartialJson(body)];
+
+    var trimmed = body.replace(/,\s*"[^"]*$/, '').replace(/,\s*$/, '');
+    if (trimmed !== body) candidates.push(closePartialJson(trimmed));
+
+    var lastComma = body.lastIndexOf(',');
+    if (lastComma > 0) candidates.push(closePartialJson(body.slice(0, lastComma)));
+
+    var lastBrace = body.lastIndexOf('}');
+    if (lastBrace > 0) candidates.push(closePartialJson(body.slice(0, lastBrace + 1)));
+
+    for (var i = 0; i < candidates.length; i++) {
+      var parsed = tryParse(candidates[i]);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    }
+    return null;
+  }
+
   /** 从模型输出里尽力抠出一个 JSON 对象；失败返回 null。 */
   function extractJson(raw) {
     if (typeof raw !== 'string') return null;
@@ -381,6 +430,8 @@
     toPlainText: toPlainText,
     demoAnalysis: demoAnalysis,
     looksLikeEnglish: looksLikeEnglish,
+    closePartialJson: closePartialJson,
+    parsePartialJson: parsePartialJson,
     pickVoice: pickVoice,
     escapeHtml: escapeHtml,
     ankiBack: ankiBack,

@@ -14,6 +14,7 @@ var DEFAULT_SETTINGS = {
   demoMode: false,                // true = 不联网，返回内置示例
   recordHistory: false,           // 默认不记录查询历史（只有主动「收藏」才留内容）
   disabledSites: [],              // 在这些域名上完全不生效
+  streaming: true,                // 边生成边显示
   apiBase: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
   temperature: 0.3,
@@ -158,24 +159,26 @@ function contentOf(data) {
   return content;
 }
 
-async function callChat(cfg, messages) {
-  var url = joinEndpoint(cfg.settings.apiBase);
+function buildBody(cfg, messages, stream) {
   var model = String(cfg.settings.model || '').trim();
   if (!model) throw new Error('未配置模型名');
   var body = {
     model: model,
     messages: messages,
-    stream: false
+    stream: !!stream
   };
   var temperature = Number(cfg.settings.temperature);
   if (isFinite(temperature)) body.temperature = temperature;
   if (cfg.settings.jsonMode) body.response_format = { type: 'json_object' };
+  return body;
+}
 
+/** 发送请求；服务端明确不支持 response_format 时降级重试一次（流式/非流式共用） */
+async function postChat(url, cfg, body) {
   var res = await doFetchWithRetry(url, cfg.apiKey, body);
   if (!res.ok) {
     var detail = await readDetail(res);
     if (body.response_format && looksLikeFormatRejection(res.status, detail)) {
-      // 部分 OpenAI 兼容服务不支持 response_format，自动降级重试一次
       delete body.response_format;
       res = await doFetchWithRetry(url, cfg.apiKey, body);
       if (!res.ok) throw httpError(res.status, await readDetail(res));
@@ -183,6 +186,12 @@ async function callChat(cfg, messages) {
       throw httpError(res.status, detail);
     }
   }
+  return res;
+}
+
+async function callChat(cfg, messages) {
+  var url = joinEndpoint(cfg.settings.apiBase);
+  var res = await postChat(url, cfg, buildBody(cfg, messages, false));
   var data;
   try {
     data = await res.json();
@@ -190,6 +199,106 @@ async function callChat(cfg, messages) {
     throw new Error('接口返回的不是合法 JSON');
   }
   return contentOf(data);
+}
+
+function readStreamChunk(reader, ms) {
+  var timer = null;
+  var stall = new Promise(function (_, reject) {
+    timer = setTimeout(function () {
+      reject(new Error('流式响应超时（' + Math.round(ms / 1000) + ' 秒没有新数据）'));
+    }, ms);
+  });
+  return Promise.race([reader.read(), stall]).then(function (chunk) {
+    if (timer) clearTimeout(timer);
+    return chunk;
+  }, function (err) {
+    if (timer) clearTimeout(timer);
+    throw err;
+  });
+}
+
+/**
+ * 流式请求：边收边把已生成的文本回传给页面（content script 负责边下边解析）。
+ * 服务端若忽略 stream 参数（返回普通 JSON），自动退回非流式解析。
+ */
+async function streamChat(cfg, messages, onDelta) {
+  var url = joinEndpoint(cfg.settings.apiBase);
+  var res = await postChat(url, cfg, buildBody(cfg, messages, true));
+
+  var ctype = '';
+  try { ctype = (res.headers && res.headers.get('content-type')) || ''; } catch (e) { ctype = ''; }
+
+  if (ctype.indexOf('text/event-stream') < 0) {
+    var data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      throw new Error('接口返回的不是合法 JSON');
+    }
+    return contentOf(data);
+  }
+  if (!res.body || !res.body.getReader) throw new Error('当前环境不支持流式读取');
+
+  var reader = res.body.getReader();
+  var decoder = new TextDecoder();
+  var buf = '';
+  var out = '';
+  var lastPush = 0;
+  var STALL = 20000;
+
+  while (true) {
+    var chunk;
+    try {
+      chunk = await readStreamChunk(reader, STALL);
+    } catch (err) {
+      try { reader.cancel(); } catch (e) { /* 忽略 */ }
+      if (out.trim()) throw new Error('流式响应中断：' + (err.message || err));
+      throw err;
+    }
+    if (chunk.done) break;
+
+    var decoded = '';
+    try {
+      decoded = decoder.decode(chunk.value, { stream: true });
+    } catch (e) {
+      decoded = '';
+    }
+    buf += decoded;
+
+    var idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      var line = buf.slice(0, idx).replace(/\r$/, '').trim();
+      buf = buf.slice(idx + 1);
+      if (!line || line.charAt(0) === ':') continue;
+      if (line.slice(0, 5) !== 'data:') continue;
+      var payload = line.slice(5).trim();
+      if (payload === '[DONE]') { buf = ''; continue; }
+      var delta = '';
+      try {
+        var obj = JSON.parse(payload);
+        var choice = obj && obj.choices && obj.choices[0];
+        if (choice) {
+          delta = (choice.delta && choice.delta.content) || '';
+          if (!delta && typeof choice.text === 'string') delta = choice.text;
+          if (typeof delta !== 'string') delta = '';
+        }
+      } catch (e) {
+        delta = '';
+      }
+      if (delta) out += delta;
+    }
+
+    if (out && Date.now() - lastPush > 100) {
+      lastPush = Date.now();
+      try { onDelta(out); } catch (e) { /* 忽略页面侧异常 */ }
+    }
+  }
+
+  if (out) {
+    try { onDelta(out); } catch (e) { /* 忽略 */ }
+  }
+  if (!out.trim()) throw new Error('接口没有返回内容');
+  return out;
 }
 
 async function readDetail(res) {
@@ -231,7 +340,7 @@ function rememberCache(key, analysis) {
   }
 }
 
-async function handleAnalyze(msg) {
+async function handleAnalyze(msg, sender) {
   var text = L.truncate(msg && msg.text, L.MAX_TEXT).trim();
   if (!text) throw new Error('选中内容为空');
   var context = L.truncate(msg && msg.context, L.MAX_CONTEXT).trim();
@@ -260,7 +369,17 @@ async function handleAnalyze(msg) {
 
   var messages = L.buildMessages({ text: text, context: context, pageTitle: msg && msg.pageTitle });
   var started = Date.now();
-  var content = await callChat(cfg, messages);
+  var streamId = msg && msg.streamId;
+  var tabId = sender && sender.tab && sender.tab.id;
+  var useStream = cfg.settings.streaming !== false && !!streamId && !!tabId;
+  var content;
+  if (useStream) {
+    content = await streamChat(cfg, messages, function (partial) {
+      postStream(tabId, streamId, partial);
+    });
+  } else {
+    content = await callChat(cfg, messages);
+  }
   var ms = Date.now() - started;
 
   var parsed = L.extractJson(content);
@@ -279,7 +398,17 @@ async function handleAnalyze(msg) {
     pageTitle: (msg && msg.pageTitle) || '',
     pageUrl: (msg && msg.pageUrl) || ''
   }, analysis);
-  return { ok: true, analysis: analysis, meta: { model: cfg.settings.model, ms: ms, fallback: fallback } };
+  return { ok: true, analysis: analysis, meta: { model: cfg.settings.model, ms: ms, fallback: fallback, streamed: useStream } };
+}
+
+/** 把「目前收到的文本」推给发起查询的页面 */
+function postStream(tabId, streamId, text) {
+  if (!tabId) return;
+  try {
+    chrome.tabs.sendMessage(tabId, { type: 'se-stream', streamId: streamId, text: text }, function () {
+      void chrome.runtime.lastError;
+    });
+  } catch (e) { /* 页面关闭或未注入时忽略 */ }
 }
 
 /* 查询历史：本机留存，可关可清，失败不影响主流程 */
@@ -366,7 +495,7 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (!msg || typeof msg.type !== 'string') return;
 
   if (msg.type === 'se-analyze') {
-    handleAnalyze(msg).then(sendResponse, function (err) {
+    handleAnalyze(msg, sender).then(sendResponse, function (err) {
       sendResponse({ ok: false, error: String((err && err.message) || err) });
     });
     return true;

@@ -30,6 +30,7 @@
 | 演示模式 | 不联网、不调用接口，返回内置示例，供没配 Key 时体验。 |
 | 触发方式 | 默认「选中后出现小圆钮，点击查询」；也可改成「选中即自动查询」。 |
 | 请求 JSON 模式 | 默认开。若你的接口不支持 `response_format`，扩展会自动降级重试一次，也可以手动关掉。 |
+| 流式输出 | 默认开：边生成边显示，首字延迟通常从 2 秒降到几百毫秒；网关不支持流式时自动退回整段返回。 |
 | 温度 | 模型回答的随机程度：0 最稳定，越大越发散；查词建议 0–0.5（默认 0.3）。 |
 
 ## 使用
@@ -38,6 +39,7 @@
 - 只认**英文为主**的选区；中文、日文、韩文不会被弹窗，也不会把内容发出去。
 - **点工具栏的图标**会打开快速面板：看当前状态（已配 Key / 演示模式 / 未配置）、开关划词、开关演示模式、开关历史，以及**「在本站停用」**（按域名，只影响当前网站），还能一键跳到收藏/历史。
 - 小窗顺序固定：**生词**（词性 + 中文释义，优先六级及以上词汇、专业词、熟词僻义；单独选一个词时一定解释这个词）→ **整句解释**（译文 + 语境解释）→ **固定表达**（释义 + 例句）。
+- **结果边生成边出现**：流式接收，生词通常先出来，弹窗页脚会标「生成中…」；接口不支持流式时自动退回整段返回。
 - 小窗右上角：**🔊** 朗读选中内容（每个生词后还有单独的小喇叭）、**☆** 收藏、**⧉** 复制、**✕** 关闭；点空白处或按 <kbd>Esc</kbd> 也可关闭。朗读用浏览器自带语音，优先美音，不走 API、不计费。
 - **按住小窗顶部或底部可以拖动**，本次会话内会记住摆放位置；小窗和设置页都会跟随系统深色模式自动切换成深色纸面。
 - 同一选区会复用最近一次结果（10 分钟内）；修改接口/模型/Key 后缓存自动作废。
@@ -80,7 +82,7 @@ select-english-extension/
 
 ```powershell
 New-Item -ItemType Directory -Force -Path dist | Out-Null
-Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE, CHANGELOG.md -DestinationPath "dist/select-english-extension-v0.4.0.zip" -Force
+Compress-Archive -Path manifest.json, src, icons, README.md, LICENSE, CHANGELOG.md -DestinationPath "dist/select-english-extension-v0.5.0.zip" -Force
 ```
 
 `dist/` 已在 `.gitignore` 里。**API Key 永远不会进这个包**：它只存在浏览器本地存储中。
@@ -93,13 +95,14 @@ CI 工作流模板在 `tools/ci.yml`（跑测试 + 打 zip 构件）。启用方
 
 ```powershell
 node tests\lib.test.mjs         # 提示词 / JSON 解析 / 归一化 / 英文判定 / 朗读选声 / Anki … 78 项
-node tests\check-manifest.mjs   # MV3 结构、弹窗资源、安全不变量 ……………………………… 41 项
+node tests\check-manifest.mjs   # MV3 结构、弹窗资源、流式接线、安全不变量 ……………………… 46 项
 node tests\background.test.mjs  # 后台：请求/重试/缓存/历史/菜单/演示/存储级别（假 chrome）… 108 项
 node tests\content-dom.test.mjs # 划词 DOM 冒烟：圆钮/弹窗/收藏/朗读/拖动/启停/中英文/站点 … 66 项
 node tests\popup-dom.test.mjs   # 工具栏弹窗 DOM 冒烟：状态/开关/本站停用/跳转 ……………… 12 项
+node tests\streaming.test.mjs   # 流式：截断 JSON 补齐 / SSE 解析 / 边下边渲染 ……………… 26 项
 ```
 
-合计 305 项断言，全部通过。
+合计 336 项断言，全部通过。
 
 - `background.test.mjs` 与 `content-dom.test.mjs` 会真正执行 `src/background.js` 与 `src/content.js`，不是只做字符串检查。
 - `content-dom.test.mjs` 需要 jsdom（`npm i jsdom`，并把 `SE_JSDOM_DIR` 指向装它的目录；没装时该测试自动 SKIP 而不是失败）。

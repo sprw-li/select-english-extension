@@ -66,9 +66,17 @@ for (const file of ['src/content.js', 'src/background.js', 'src/options.js']) {
   check(file + ' 无动态代码执行', !/\beval\s*\(|new\s+Function\s*\(|document\.write\s*\(|insertAdjacentHTML|\.srcdoc\s*=/.test(code));
 }
 
-for (const t of ['tests/lib.test.mjs', 'tests/background.test.mjs', 'tests/content-dom.test.mjs', 'tests/popup-dom.test.mjs']) {
+for (const t of ['tests/lib.test.mjs', 'tests/background.test.mjs', 'tests/content-dom.test.mjs', 'tests/popup-dom.test.mjs', 'tests/streaming.test.mjs']) {
   check('存在真实执行型测试: ' + t, existsSync(path.join(root, t)));
 }
+
+/* 流式输出接线 */
+const bgStream = readFileSync(path.join(root, 'src/background.js'), 'utf8');
+check('后台请求带 stream 参数', /stream: !!stream/.test(bgStream));
+check('后台把中间结果推给页面', /type: 'se-stream'/.test(bgStream));
+check('content script 能接收中间结果', /msg\.type === 'se-stream'/.test(contentSrc));
+check('设置里有流式开关', existsSync(path.join(root, 'src/options.html')) &&
+  /id="streaming"/.test(readFileSync(path.join(root, 'src/options.html'), 'utf8')));
 
 /* 工具栏弹窗 */
 for (const f of ['src/popup.html', 'src/popup.js', 'src/popup.css']) {

@@ -8,6 +8,7 @@ var DEFAULTS = {
   trigger: 'button',
   recordHistory: false,
   demoMode: false,
+  streaming: true,
   apiBase: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
   temperature: 0.3,
@@ -49,6 +50,7 @@ async function loadSettings() {
   $('trigger').value = s.trigger === 'auto' ? 'auto' : 'button';
   $('recordHistory').checked = s.recordHistory !== false;
   $('demoMode').checked = s.demoMode === true;
+  $('streaming').checked = s.streaming !== false;
   $('apiBase').value = s.apiBase || DEFAULTS.apiBase;
   $('model').value = s.model || DEFAULTS.model;
   $('temperature').value = s.temperature;
@@ -66,6 +68,7 @@ function collectSettings() {
     trigger: $('trigger').value,
     recordHistory: $('recordHistory').checked,
     demoMode: $('demoMode').checked,
+    streaming: $('streaming').checked,
     apiBase: $('apiBase').value.trim() || DEFAULTS.apiBase,
     model: $('model').value.trim() || DEFAULTS.model,
     temperature: temperature,
@@ -286,6 +289,7 @@ $('reset').addEventListener('click', async function () {
   $('trigger').value = DEFAULTS.trigger;
   $('recordHistory').checked = DEFAULTS.recordHistory;
   $('demoMode').checked = DEFAULTS.demoMode;
+  $('streaming').checked = DEFAULTS.streaming;
   $('apiBase').value = DEFAULTS.apiBase;
   $('model').value = DEFAULTS.model;
   $('temperature').value = DEFAULTS.temperature;
